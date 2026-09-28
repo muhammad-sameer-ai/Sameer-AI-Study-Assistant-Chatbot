@@ -3,6 +3,7 @@ pypdf
 python-docx
 python-pptx
 Pillow
+sentence-transformers
 langchain==0.2.16
 langchain-community==0.2.16
 langchain-google-genai
