@@ -2,6 +2,9 @@ import os
 import io
 import streamlit as st
 from pypdf import PdfReader
+from docx import Document
+from pptx import Presentation
+from PIL import Image
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
@@ -9,25 +12,57 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-st.set_page_config(page_title="Study Assistant & Paper Generator", layout="wide")
+st.set_page_config(page_title="Multi-Format Study Assistant", layout="wide")
 
 st.title("📚 AI Study Assistant & Question Paper Generator")
-st.caption("Upload your PDFs, ask strict grounded questions, and generate formal exam papers.")
+st.caption("Upload PDFs, Word files (.docx), PowerPoint presentations (.pptx), or Images (.png, .jpg)")
 
 with st.sidebar:
     st.header("1. Setup & Upload")
     api_key = st.text_input("Enter Gemini API Key", type="password")
-    uploaded_files = st.file_uploader("Upload Notes/PDFs", type=["pdf"], accept_multiple_files=True)
+    uploaded_files = st.file_uploader(
+        "Upload Study Materials", 
+        type=["pdf", "docx", "pptx", "png", "jpg", "jpeg"], 
+        accept_multiple_files=True
+    )
 
-def get_pdf_text(pdf_docs):
-    text = ""
-    for pdf in pdf_docs:
-        pdf_reader = PdfReader(pdf)
-        for page in pdf_reader.pages:
-            extracted = page.extract_text()
-            if extracted:
-                text += extracted + "\n"
-    return text
+def extract_text_from_files(files, llm_instance):
+    combined_text = ""
+    for file in files:
+        file_ext = file.name.split(".")[-1].lower()
+        
+        if file_ext == "pdf":
+            reader = PdfReader(file)
+            for page in reader.pages:
+                extracted = page.extract_text()
+                if extracted:
+                    combined_text += extracted + "\n"
+                    
+        elif file_ext == "docx":
+            doc = Document(file)
+            for para in doc.paragraphs:
+                if para.text.strip():
+                    combined_text += para.text + "\n"
+                    
+        elif file_ext == "pptx":
+            prs = Presentation(file)
+            for slide in prs.slides:
+                for shape in slide.shapes:
+                    if shape.has_text_frame:
+                        for paragraph in shape.text_frame.paragraphs:
+                            if paragraph.text.strip():
+                                combined_text += paragraph.text + "\n"
+                                
+        elif file_ext in ["png", "jpg", "jpeg"]:
+            image = Image.open(file)
+            # Use Gemini Vision capabilities to extract text from images
+            vision_response = llm_instance.invoke([
+                "Extract all text, equations, and key information from this image verbatim.", 
+                image
+            ])
+            combined_text += f"\n[Content from Image {file.name}]:\n" + vision_response.content + "\n"
+            
+    return combined_text
 
 def create_pdf_paper(paper_text):
     buffer = io.BytesIO()
@@ -58,10 +93,11 @@ def create_pdf_paper(paper_text):
 
 if api_key and uploaded_files:
     os.environ["GOOGLE_API_KEY"] = api_key
-    
-    @st.cache_resource(show_spinner="Processing uploaded documents...")
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2)
+
+    @st.cache_resource(show_spinner="Processing uploaded documents and images...")
     def process_documents(files):
-        raw_text = get_pdf_text(files)
+        raw_text = extract_text_from_files(files, llm)
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         chunks = text_splitter.split_text(raw_text)
         
@@ -71,22 +107,19 @@ if api_key and uploaded_files:
 
     vector_store = process_documents(uploaded_files)
     retriever = vector_store.as_retriever(search_kwargs={"k": 4})
-    
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2)
 
     tab1, tab2 = st.tabs(["💬 Document Chat", "📝 Generate Question Paper"])
 
     with tab1:
-        st.subheader("Ask questions from your uploaded document")
+        st.subheader("Ask questions from your uploaded files")
         user_query = st.text_input("Enter your question:")
         if user_query:
-            with st.spinner("Searching document..."):
+            with st.spinner("Searching files..."):
                 docs = retriever.invoke(user_query)
                 context = "\n\n".join([doc.page_content for doc in docs])
                 prompt = f"""
                 You are a strict academic study assistant. Answer the question based ONLY on the provided context below.
                 If the answer cannot be found in the context, explicitly reply: "I cannot answer this based on the uploaded material."
-                Do NOT use any outside knowledge.
 
                 Context:
                 {context}
@@ -113,26 +146,19 @@ if api_key and uploaded_files:
 
         if st.button("Generate Paper"):
             with st.spinner("Extracting content and formatting exam paper..."):
-                docs = retriever.invoke("Key concepts, definitions, summaries, and main topics in document")
+                docs = retriever.invoke("Key concepts, definitions, summaries, and main topics")
                 context = "\n\n".join([doc.page_content for doc in docs])
                 paper_prompt = f"""
                 Using ONLY the provided context, generate a complete exam question paper titled '{paper_title}'.
-                The exam paper MUST follow this exact format:
-
-                TITLE: {paper_title}
-                Total Marks: [Calculate appropriate total]
-                Time Allowed: 2 Hours
-
+                
                 SECTION A: MULTIPLE CHOICE QUESTIONS ({num_mcqs} Questions)
-                Create {num_mcqs} MCQs based strictly on the uploaded text. Provide 4 options (A, B, C, D) for each.
+                Create {num_mcqs} MCQs based strictly on the uploaded text with 4 options (A, B, C, D) each.
 
                 SECTION B: SHORT ANSWER QUESTIONS ({num_short} Questions)
-                Create {num_short} clear, concise short-answer questions.
+                Create {num_short} short-answer questions.
 
                 SECTION C: LONG ANSWER QUESTIONS ({num_long} Questions)
-                Create {num_long} comprehensive essay or analytical long questions.
-
-                Do not include answers or answer keys in the generated paper.
+                Create {num_long} essay or analytical long questions.
 
                 Context:
                 {context}
@@ -155,4 +181,4 @@ if api_key and uploaded_files:
             )
 
 else:
-    st.info("Please enter your Gemini API Key and upload at least one PDF in the sidebar to start.")
+    st.info("Please enter your Gemini API Key and upload at least one file to start.")
