@@ -54,13 +54,16 @@ def extract_text_from_files(files, llm_instance):
                                 combined_text += paragraph.text + "\n"
                                 
         elif file_ext in ["png", "jpg", "jpeg"]:
-            image = Image.open(file)
-            # Use Gemini Vision capabilities to extract text from images
-            vision_response = llm_instance.invoke([
-                "Extract all text, equations, and key information from this image verbatim.", 
-                image
-            ])
-            combined_text += f"\n[Content from Image {file.name}]:\n" + vision_response.content + "\n"
+            try:
+                image = Image.open(file)
+                vision_response = llm_instance.invoke([
+                    "Extract all text, equations, tables, and key information from this image verbatim.", 
+                    image
+                ])
+                if vision_response.content:
+                    combined_text += f"\n[Content from Image {file.name}]:\n" + vision_response.content + "\n"
+            except Exception as e:
+                st.warning(f"Could not read image {file.name}: {str(e)}")
             
     return combined_text
 
@@ -98,10 +101,15 @@ if api_key and uploaded_files:
     @st.cache_resource(show_spinner="Processing uploaded documents and images...")
     def process_documents(files):
         raw_text = extract_text_from_files(files, llm)
+        if not raw_text.strip():
+            st.error("No readable text could be extracted from the uploaded files. Please check your files.")
+            st.stop()
+
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         chunks = text_splitter.split_text(raw_text)
         
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        # Updated to modern Gemini Embedding Model
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
         vector_store = Chroma.from_texts(chunks, embedding=embeddings)
         return vector_store
 
