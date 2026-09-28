@@ -108,9 +108,16 @@ if api_key and uploaded_files:
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         chunks = text_splitter.split_text(raw_text)
         
-        # Updated to modern Gemini Embedding Model
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
-        vector_store = Chroma.from_texts(chunks, embedding=embeddings)
+        # Clean chunks: filter out empty or whitespace-only strings
+        clean_chunks = [c.strip() for c in chunks if c and c.strip()]
+        
+        if not clean_chunks:
+            st.error("Text splitting resulted in empty content.")
+            st.stop()
+
+        # Robust embedding declaration
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        vector_store = Chroma.from_texts(clean_chunks, embedding=embeddings)
         return vector_store
 
     vector_store = process_documents(uploaded_files)
