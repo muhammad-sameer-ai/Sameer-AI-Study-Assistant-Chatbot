@@ -7,7 +7,8 @@ from pptx import Presentation
 from PIL import Image
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -108,15 +109,14 @@ if api_key and uploaded_files:
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         chunks = text_splitter.split_text(raw_text)
         
-        # Clean chunks: filter out empty or whitespace-only strings
         clean_chunks = [c.strip() for c in chunks if c and c.strip()]
         
         if not clean_chunks:
             st.error("Text splitting resulted in empty content.")
             st.stop()
 
-        # Robust embedding declaration
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        # Reliable local embeddings: zero API rate limits or connection errors
+        embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
         vector_store = Chroma.from_texts(clean_chunks, embedding=embeddings)
         return vector_store
 
