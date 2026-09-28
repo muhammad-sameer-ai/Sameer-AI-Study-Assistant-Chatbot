@@ -5,8 +5,6 @@ from pypdf import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-from langchain.chains import RetrievalQA
-from langchain.prompts import PromptTemplate
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -16,13 +14,11 @@ st.set_page_config(page_title="Study Assistant & Paper Generator", layout="wide"
 st.title("📚 AI Study Assistant & Question Paper Generator")
 st.caption("Upload your PDFs, ask strict grounded questions, and generate formal exam papers.")
 
-# Sidebar - API Key and Uploads
 with st.sidebar:
     st.header("1. Setup & Upload")
     api_key = st.text_input("Enter Gemini API Key", type="password")
     uploaded_files = st.file_uploader("Upload Notes/PDFs", type=["pdf"], accept_multiple_files=True)
 
-# Helper function to extract text
 def get_pdf_text(pdf_docs):
     text = ""
     for pdf in pdf_docs:
@@ -33,7 +29,6 @@ def get_pdf_text(pdf_docs):
                 text += extracted + "\n"
     return text
 
-# Helper function to generate downloadable PDF paper
 def create_pdf_paper(paper_text):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
@@ -52,7 +47,6 @@ def create_pdf_paper(paper_text):
     lines = paper_text.split('\n')
     for line in lines:
         if line.strip():
-            # Replace markdown bolding for ReportLab tags
             formatted_line = line.replace('**', '<b>').replace('**', '</b>')
             story.append(Paragraph(formatted_line, custom_style))
         else:
@@ -80,41 +74,31 @@ if api_key and uploaded_files:
     
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2)
 
-    # Prompt Template to enforce STRICT grounding
-    strict_template = """
-    You are a strict academic study assistant. Answer the question based ONLY on the provided context below.
-    If the answer cannot be found in the context, explicitly reply: "I cannot answer this based on the uploaded material."
-    Do NOT use any outside knowledge.
-
-    Context:
-    {context}
-
-    Question: {question}
-
-    Answer:
-    """
-    STRICT_PROMPT = PromptTemplate(template=strict_template, input_variables=["context", "question"])
-
-    qa_chain = RetrievalQA.from_chain_type(
-        llm=llm,
-        retrieval_type="stuff",
-        retriever=retriever,
-        chain_type_kwargs={"prompt": STRICT_PROMPT}
-    )
-
     tab1, tab2 = st.tabs(["💬 Document Chat", "📝 Generate Question Paper"])
 
-    # Tab 1: Direct Q&A
     with tab1:
         st.subheader("Ask questions from your uploaded document")
         user_query = st.text_input("Enter your question:")
         if user_query:
             with st.spinner("Searching document..."):
-                response = qa_chain.run(user_query)
-                st.write("**Answer:**")
-                st.info(response)
+                docs = retriever.invoke(user_query)
+                context = "\n\n".join([doc.page_content for doc in docs])
+                prompt = f"""
+                You are a strict academic study assistant. Answer the question based ONLY on the provided context below.
+                If the answer cannot be found in the context, explicitly reply: "I cannot answer this based on the uploaded material."
+                Do NOT use any outside knowledge.
 
-    # Tab 2: Question Paper Generation
+                Context:
+                {context}
+
+                Question: {user_query}
+
+                Answer:
+                """
+                response = llm.invoke(prompt)
+                st.write("**Answer:**")
+                st.info(response.content)
+
     with tab2:
         st.subheader("Generate Full Examination Paper")
         col1, col2, col3 = st.columns(3)
@@ -129,6 +113,8 @@ if api_key and uploaded_files:
 
         if st.button("Generate Paper"):
             with st.spinner("Extracting content and formatting exam paper..."):
+                docs = retriever.invoke("Key concepts, definitions, summaries, and main topics in document")
+                context = "\n\n".join([doc.page_content for doc in docs])
                 paper_prompt = f"""
                 Using ONLY the provided context, generate a complete exam question paper titled '{paper_title}'.
                 The exam paper MUST follow this exact format:
@@ -147,10 +133,13 @@ if api_key and uploaded_files:
                 Create {num_long} comprehensive essay or analytical long questions.
 
                 Do not include answers or answer keys in the generated paper.
+
+                Context:
+                {context}
                 """
                 
-                paper_content = qa_chain.run(paper_prompt)
-                st.session_state['generated_paper'] = paper_content
+                response = llm.invoke(paper_prompt)
+                st.session_state['generated_paper'] = response.content
 
         if 'generated_paper' in st.session_state:
             st.markdown("### Preview Generated Paper")
