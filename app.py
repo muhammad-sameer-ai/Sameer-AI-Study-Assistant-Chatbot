@@ -97,7 +97,8 @@ def create_pdf_paper(paper_text):
 
 if api_key and uploaded_files:
     os.environ["GOOGLE_API_KEY"] = api_key
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2)
+    # Valid Gemini API model identifier
+    llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.2)
 
     @st.cache_resource(show_spinner="Processing uploaded documents and images...")
     def process_documents(files):
@@ -115,7 +116,6 @@ if api_key and uploaded_files:
             st.error("Text splitting resulted in empty content.")
             st.stop()
 
-        # Reliable local embeddings: zero API rate limits or connection errors
         embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
         vector_store = Chroma.from_texts(clean_chunks, embedding=embeddings)
         return vector_store
